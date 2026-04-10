@@ -503,3 +503,138 @@ void dm_stripe_exit(void)
 	dm_unregister_target(&stripe_target);
 	destroy_workqueue(dm_stripe_wq);
 }
+
+/*****************test case*******************************/
+
+static int tests_run = 0;
+static int tests_passed = 0;
+
+static struct stripe_c *alloc_sc(uint32_t chunk_size, uint32_t stripes)
+{
+	struct stripe_c *sc = kcalloc(1, sizeof(struct stripe_c), GFP_KERNEL);
+	sc->chunk_size = chunk_size;
+	sc->stripes = stripes;
+	return sc;
+}
+
+
+/* Basic: chunk_size=8 sectors, 2 stripes -> io_min=4096, io_opt=8192 */
+static void test_basic(void)
+{
+	struct stripe_c *sc = alloc_sc(8, 2);
+	struct dm_target ti = { .private = sc };
+	struct queue_limits limits = { 0 };
+
+	stripe_io_hints(&ti, &limits);
+
+	tests_run++;
+
+	pr_info("test_basic: limits.io_min = %u limits.io_opt = %u\n", 
+		limits.io_min, limits.io_opt);
+
+	if (limits.io_min == 4096 && limits.io_opt == 8192) {
+		pr_info ("CVE-2025-39940: test_basic passed.\n");
+		tests_passed++;
+	}
+	kfree(sc);
+}
+
+/* Single stripe: io_opt == io_min */
+static void test_single_stripe(void)
+{
+	struct stripe_c *sc = alloc_sc(16, 1);
+	struct dm_target ti = { .private = sc };
+	struct queue_limits limits = { 0 };
+
+	stripe_io_hints(&ti, &limits);
+
+	tests_run++;
+
+	pr_info("test_single_stripe: limits.io_min = %u limits.io_opt = %u\n", 
+		limits.io_min, limits.io_opt);
+
+	if (limits.io_min == 16 * 512 && limits.io_opt == 16 * 512) {
+		pr_info ("CVE-2025-39940: test_single_stripe passed.\n");
+		tests_passed++;
+	}
+	kfree(sc);
+}
+
+/* chunk_size=1 (minimum) */
+static void test_min_chunk(void)
+{
+	struct stripe_c *sc = alloc_sc(1, 4);
+	struct dm_target ti = { .private = sc };
+	struct queue_limits limits = { 0 };
+
+	stripe_io_hints(&ti, &limits);
+
+	tests_run++;
+
+	pr_info("test_min_chunk: limits.io_min = %u limits.io_opt = %u\n", 
+		limits.io_min, limits.io_opt);
+
+	if (limits.io_min == 512 && limits.io_opt == 512*4) {
+		pr_info ("CVE-2025-39940: test_min_chunk passed.\n");
+		tests_passed++;
+	}
+	kfree(sc);
+}
+
+/* Shift overflow: chunk_size too large to shift left by 9 in a uint32 */
+static void test_shl_overflow(void)
+{
+	/* 0x800000 << 9 = 0x100000000, overflows uint32 */
+	struct stripe_c *sc = alloc_sc(0x800000, 2);
+	struct dm_target ti = { .private = sc };
+	struct queue_limits limits = { .io_min = 0xDEAD, .io_opt = 0xBEEF };
+
+	stripe_io_hints(&ti, &limits);
+
+	tests_run++;
+
+	pr_info("test_shl_overflow: limits.io_min = %u limits.io_opt = %u\n", 
+		limits.io_min, limits.io_opt);
+
+	if (limits.io_min == 0xDEAD && limits.io_opt == 0xBEEF) {
+		pr_info ("CVE-2025-39940: test_shl_overflow passed.\n");
+		tests_passed++;
+	}
+	kfree(sc);
+}
+
+/* Multiply overflow: io_min * stripes overflows uint32 */
+static void test_mul_overflow(void)
+{
+	/* chunk_size=0x400000 -> io_min = 0x400000 << 9 = 0x80000000
+	 * 0x80000000 * 4 overflows uint32 */
+	struct stripe_c *sc = alloc_sc(0x400000, 4);
+	struct dm_target ti = { .private = sc };
+	struct queue_limits limits = { .io_min = 0xDEAD, .io_opt = 0xBEEF };
+
+	stripe_io_hints(&ti, &limits);
+
+	tests_run++;
+
+	pr_info("test_mul_overflow: limits.io_min = %u limits.io_opt = %u\n", 
+		limits.io_min, limits.io_opt);
+
+	if (limits.io_min == 0xDEAD && limits.io_opt == 0xBEEF) {
+		pr_info ("CVE-2025-39940: test_mul_overflow passed.\n");
+		tests_passed++;
+	}
+	kfree(sc);
+}
+
+
+void blan_test_cve(void)
+{
+	test_basic();
+	test_single_stripe();
+	test_min_chunk();
+	test_shl_overflow();
+	test_mul_overflow();
+	pr_info("\nCVE-2025-39940: %d/%d tests passed.\n", tests_passed, tests_run);
+}
+
+EXPORT_SYMBOL(blan_test_cve);

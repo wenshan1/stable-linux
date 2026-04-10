@@ -6,6 +6,12 @@ menuconfig SAMPLES
 
 if SAMPLES
 
+config SAMPLE_BLAN_TEST
+	depends on m
+	tristate "Build blan test"
+	help
+	  This config option will allow you to build a test case.
+
 config SAMPLE_AUXDISPLAY
 	bool "auxdisplay sample"
 	depends on CC_CAN_LINK
